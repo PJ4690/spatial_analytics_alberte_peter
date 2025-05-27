@@ -1,14 +1,14 @@
-## spatial_analytics_alberte_peter
+# Spatial Analytics Exam
 Our repository for the code in our Spatial Analytics exam.
 
-# Introduction
+## Introduction
 
 
-# Prerequisites
+## Prerequisites
 
 
-# Structure
+## Structure
 
 
-# Authors
+## Authors
 Alberte Lyngby Christensen & Peter Jørgensen
