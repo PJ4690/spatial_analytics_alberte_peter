@@ -11,6 +11,9 @@ This README.md file supplies a brief overview of the contents of this repository
 
 Most of the code runs fairly quick, it is only when looping through each region and getting the station/isochrone and building data that the code takes a long time to process (line 100).
 
+* To run the code, begin by downloading the full BBR dataset here https://ftp.sdfe.dk/main.html?download&weblink=2c950b3aadfeedc3b136df8525234819. Move it into the repository, where it should by default be named DK_INSPIRE_BBR.gpkg. We did not include it in our final repository because the file is massive (almost 5 GB). For more information about the dataset, see here: https://dataforsyningen.dk/data/3829. 
+* After having added the dataset to the repository, you can run the creating_subsets.Rmd file and create the subsets - this might take a little while. Afterwards you can run the main script, main.Rmd, and create visualizations identical to the ones in our paper. Most of the code in the main script runs fairly quick, it is only when looping through each region and getting the station/isochrone and building data that the code takes a long time to process (line 100).
+
 
 ## Structure
 This section gives an overview of the different files in our repository.
