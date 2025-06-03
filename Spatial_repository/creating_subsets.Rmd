@@ -1,0 +1,55 @@
+---
+title: "Creating regional subsets for the main script"
+course: "Spatial Analytics, Cultural Data Science, AU"
+authors: "Alberte Lyngby Christensen & Peter Jørgensen"
+date: "4/6/2025"
+---
+
+The full BBR dataset for Denmark is pretty large (almost 5 GB), so to make things more manageable, this script creates smaller subsets of the dataset for Northern Jutland (Nordjylland) and Northern Zealand (Nordsjælland). These will be used in the main script.
+
+---
+
+```{r setup, message=FALSE, warning=FALSE}
+
+# Installing the required packages
+install.packages(c("sf", "osmdata"))
+
+# Load libraries
+library(sf)         # For working with spatial data
+library(osmdata)    # For getting region bounding boxes from OSM
+
+# File path to the full BBR dataset
+file_path <- "DK_INSPIRE_BBR.gpkg"
+
+# Function to extract and save buildings by region name
+extract_buildings <- function(region_name, output_path) {
+  
+  # Get the bounding box for the region
+  bbox <- getbb(region_name)
+  
+  # Create a bounding polygon and convert it to match the dataset's CRS (EPSG:25832)
+  bbox_poly <- st_as_sfc(st_bbox(c(
+    xmin = bbox[1, 1], xmax = bbox[1, 2],
+    ymin = bbox[2, 1], ymax = bbox[2, 2]
+  ), crs = 4326))
+  
+  bbox_poly_utm <- st_transform(bbox_poly, 25832)
+  
+  # Read buildings from the BBR file that fall inside the bounding box
+  buildings <- st_read(
+    dsn = file_path,
+    layer = "building",
+    wkt_filter = st_as_text(bbox_poly_utm),
+    quiet = TRUE
+  )
+  
+  # Save the subset to a new geopackage file
+  st_write(buildings, output_path, delete_dsn = TRUE, quiet = TRUE)
+}
+
+# Create building subset for Nordjylland
+extract_buildings("Nordjylland, Denmark", "subset_nordjylland.gpkg")
+
+# Create building subset for Nordsjælland
+extract_buildings("Nordsjælland, Denmark", "subset_nordsjaelland.gpkg")
+```

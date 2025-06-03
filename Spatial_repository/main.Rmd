@@ -1,0 +1,354 @@
+---
+title: "Access to train stations in Northern Jutland (and Zealand)"
+course: "Spatial Analytics, Cultural Data Science, AU"
+authors: "Alberte Lyngby Christensen & Peter Jørgensen"
+date: "4/6/2025"
+---
+This is the main script. It is divided into the following sections: preprocessing setup, data preparation, functions, data processing, combine geometry for mapping, interactive leaflet map, static plotting using ggplot2 & statistical analysis.
+---
+
+```{r setup, include=FALSE}
+# PREPROCESSING SETUP
+
+# Installing all the required packages
+install.packages(c("sf", "osmdata", "osrm", "dplyr", "ggplot2", "leaflet", "nngeo"))
+
+# Loading the libraries
+library(sf)           # For spatial vector data
+library(osmdata)      # For querying OpenStreetMap
+library(osrm)         # For routing and isochrones
+library(dplyr)        # For data manipulation
+library(ggplot2)      # For static plots
+library(leaflet)      # For interactive maps
+library(nngeo)        # Calculations for spatial data
+
+```
+
+```{r}
+## DATA PREPARATION
+
+# Defininng paths to the cadastre files (subsets of the main data)
+cadastre_files <- list(
+  "Nordjylland, Denmark" = "subset_nordjylland.gpkg",
+  "Nordsjælland, Denmark" = "subset_nordsjaelland.gpkg"
+)
+
+# The two regions we're working with in this script
+regions <- c("Nordjylland, Denmark", "Nordsjælland, Denmark")
+```
+
+```{r}
+## FUNCTIONS
+
+# Function to grab train stations from OSM and create 15-minute driving isochrones
+get_stations_and_isochrones <- function(region_name) {
+  bbox <- getbb(region_name)  # Get bounding box for the region
+  
+  # Query OSM for railway stations within the region
+  stations_osm <- opq(bbox = bbox) %>%
+    add_osm_feature(key = "railway", value = c("station", "halt")) %>% # making sure it includes small stations as well
+    osmdata_sf()
+
+  # Convert station points to sf format and transform to WGS84
+  stations <- stations_osm$osm_points %>%
+    st_transform(4326) %>%
+    filter(!is.na(name))  # Keep only stations with names
+
+  # Removing stations from Nordjylland that are wrong (having checked using OSRM and Rejseplanen)
+  if (region_name == "Nordjylland, Denmark") {
+    stations <- stations %>% filter(!name %in% c("Hvidbjerg", "Skive St.", "Handest", "Mariager", "Østeraadalen", "Uglev", "Aquapark", "Fårup Grillen", "True", "Indgangen", "Lyngs", "Oddesund Nord", "Limfjorden", "Glenstrup", "Brødløs", "Lunddalen"))
+  }
+  
+  # For each station, generate an isochrone
+  iso_list <- list()
+  for (i in seq_len(nrow(stations))) {
+    station_name <- stations$name[i]
+    message("Creating isochrone for station: ", station_name, " (", i, "/", nrow(stations), ")")
+    
+    result <- try(osrmIsochrone(loc = stations[i, ], breaks = c(15)), silent = TRUE)
+    if (!inherits(result, "try-error")) {
+      iso_list[[length(iso_list) + 1]] <- st_make_valid(result)
+    }
+    Sys.sleep(1.5)  # Being polite to the OSRM API
+  }
+
+  # Combine all isochrones into a single sf object
+  isochrones_combined <- if (length(iso_list) > 0) do.call(rbind, iso_list) else NULL
+
+  # Return a list containing the stations and their isochrones
+  list(stations = stations, isochrones = isochrones_combined)
+}
+
+# Function to read and simplify cadastre data
+load_and_simplify_cadastre <- function(file_path, tol = 50) {
+  message("Loading cadastre: ", file_path)
+  cad <- st_read(file_path, quiet = TRUE) # Read GPKG file quietly
+  cad_simpl <- st_simplify(cad, dTolerance = tol, preserveTopology = TRUE) # Simplify geometry
+  cad_simpl <- st_transform(cad_simpl, 4326) # Convert to WGS84
+  cad_simpl
+}
+```
+
+```{r}
+## DATA PROCESSING
+
+# Empty lists to store results
+results <- list()
+cadastres <- list()
+
+# Loop through each region and get station/isochrone and building data
+for (region in regions) {
+  res <- get_stations_and_isochrones(region)
+  results[[region]] <- res
+
+  # Load the appropriate cadastre file
+  cad_file <- cadastre_files[[region]]
+  if (is.null(cad_file)) stop("Cadastre file not found for region: ", region)
+
+  cadastres[[region]] <- load_and_simplify_cadastre(cad_file)
+}
+
+# Prepare to store counts of buildings inside vs. outside isochrones
+building_counts <- data.frame(
+  Region = character(),
+  Inside = integer(),
+  Outside = integer(),
+  stringsAsFactors = FALSE
+)
+
+# Lists to hold the actual geometries of buildings inside/outside the isochrones
+buildings_inside_all <- list()
+buildings_outside_all <- list()
+
+# For each region, check which buildings are within the 15-minute isochrones
+for (region in regions) {
+  iso <- results[[region]]$isochrones
+  cad <- cadastres[[region]]
+
+  if (!is.null(iso) && inherits(iso, "sf")) {
+    iso_union <- st_union(iso)  # Merge all isochrones into one
+
+    # Check if each building is within the isochrone polygon
+    inside_logical <- st_within(cad, iso_union, sparse = FALSE)[, 1]
+
+    # Split into inside/outside groups
+    inside <- cad[inside_logical, ]
+    outside <- cad[!inside_logical, ]
+
+    # Add label IDs just for tracking
+    inside$label_id <- seq_len(nrow(inside))
+    outside$label_id <- seq_len(nrow(outside))
+
+    # Store results
+    buildings_inside_all[[region]] <- inside
+    buildings_outside_all[[region]] <- outside
+
+    # Store building counts
+    building_counts <- rbind(building_counts, data.frame(
+      Region = region,
+      Inside = nrow(inside),
+      Outside = nrow(outside),
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+# Add total number of buildings + percentage (proprotion_inside) to summary dataframe
+building_counts <- building_counts %>%
+  mutate(
+    Total = Inside + Outside,
+    Proportion_Inside = paste0(round((Inside / Total) * 100, 1), "%")
+  ) %>%
+  select(Region, Inside, Outside, Total, Proportion_Inside)
+
+
+# Print the summary
+print(building_counts)
+```
+
+```{r}
+## COMBINE GEOMETRY FOR MAPPING
+
+# Combine all buildings inside and outside across both regions
+buildings_inside <- do.call(rbind, buildings_inside_all)
+buildings_outside <- do.call(rbind, buildings_outside_all)
+
+# Combine all valid isochrones into one big spatial object
+isochrones <- lapply(results, function(x) x$isochrones)
+isochrones <- Filter(Negate(is.null), isochrones)
+isochrones_valid <- Filter(function(x) inherits(x, "sf") &&
+                             any(st_geometry_type(x) %in% c("POLYGON", "MULTIPOLYGON")),
+                           isochrones)
+
+# Union the valid isochrones
+if (length(isochrones_valid) > 0) {
+  isochrones_all <- do.call(rbind, isochrones_valid)
+  isochrone_union <- st_union(isochrones_all)
+} else {
+  stop("No valid isochrones found.")
+}
+```
+
+```{r}
+## INTERACTIVE LEAFLET MAP
+
+# Create an empty list to store Leaflet maps for each region
+leaflet_maps <- list()
+
+# Loop over each region to create an interactive map
+for (region in regions) {
+  iso <- results[[region]]$isochrones    # Isochrone polygons
+  stations <- results[[region]]$stations # Train stations
+
+  # Check that isochrones are valid spatial features
+  if (!is.null(iso) && inherits(iso, "sf")) {
+
+    # Start building the Leaflet map
+    leaflet_map <- leaflet() %>%
+      addTiles() %>%  # Add default OSM tiles as the base layer
+      
+      # Add isochrone polygons to the map
+      addPolygons(
+        data = iso,
+        fillColor = "#084594",
+        fillOpacity = 0.5,
+        color = "#08306B",
+        weight = 1,
+        popup = NULL
+      ) %>%
+      
+      # Add train stations
+      addCircleMarkers(
+        data = stations,
+        radius = 4,
+        color = "yellow",
+        fillColor = "yellow",
+        fillOpacity = 0.9,
+        stroke = FALSE
+      ) %>%
+      
+      # Add a legend
+      addLegend(
+        position = "bottomright",
+        colors = c("#084594", "yellow"),
+        labels = c(paste("15 min (car) Isochrones -", region), "Train Station"),
+        title = "Map Info"
+      )
+
+    # Save the map in the list under the region's name
+    leaflet_maps[[region]] <- leaflet_map
+  }
+}
+
+# Display both regional maps
+leaflet_maps[["Nordjylland, Denmark"]]
+leaflet_maps[["Nordsjælland, Denmark"]]
+
+```
+
+```{r}
+## STATIC PLOTTING USING GGPLOT2
+
+# Prepare train station data for plotting
+stations_all <- bind_rows(
+  lapply(results, function(x) {
+    if (!is.null(x$stations)) {
+      x$stations %>%
+        select(name, geometry) %>%
+        mutate(Type = "Train Station")
+    }
+  })
+)
+
+# Add a label column to buildings
+buildings_inside$Type <- "Buildings Inside Isochrone"
+buildings_outside$Type <- "Buildings Outside Isochrone"
+
+# Combine buildings for unified plotting
+all_buildings <- rbind(buildings_inside, buildings_outside)
+
+# Create the static map
+ggplot() +
+  # Show isochrone area
+  geom_sf(data = isochrone_union, fill = "steelblue1", color = NA, alpha = 0.4) +
+
+  # Buildings
+  geom_sf(data = all_buildings, aes(color = Type), size = 0.05) +
+
+  # Train stations
+  geom_sf(data = stations_all, aes(color = Type), size = 0.2) +
+
+  # Deciding colors
+  scale_color_manual(
+    name = "Map Features",
+    values = c(
+      "Buildings Inside Isochrone" = "steelblue4",
+      "Buildings Outside Isochrone" = "steelblue1",
+      "Train Station" = "gold1"
+    ),
+    guide = guide_legend(override.aes = list(size = 3))
+  ) +
+
+  coord_sf() +  # Use spatial coordinates
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18, hjust = 0.5, margin = margin(b = 8)),
+    plot.subtitle = element_text(size = 12.5, hjust = 0.5, margin = margin(b = 12)),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold", size = 9),
+    legend.text = element_text(size = 9),
+    legend.background = element_blank(),
+    panel.grid.major = element_line(color = "grey80", linewidth = 0.3),
+    panel.grid.minor = element_blank(),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 10),
+    axis.ticks = element_blank()
+  ) +
+  labs(
+    title = "Train Station Accessibility (15 min isochrones)",
+    subtitle = "Buildings inside/outside 15 min isochrones (by car) centered around Train Stations"
+  )
+
+
+```
+
+```{r}
+## STATISTICAL ANALYSIS
+# We'll calculate how far each building is from the nearest train station
+
+# Empty list to hold distance data by region
+distances_by_region <- list()
+
+# Go through each region
+for (region in regions) {
+  buildings <- cadastres[[region]]     # Get the building data
+  stations <- results[[region]]$stations  # Get the station data
+
+  # Find the nearest station for each building
+  # Note: st_nn() returns geodesic distances in meters even if coords are in degrees
+  nn_info <- st_nn(buildings, stations, k = 1, returnDist = TRUE)
+
+  # Extract just the distances (in meters), convert to kilometers
+  distances <- unlist(nn_info$dist)
+
+  # Store the distances along with the region name
+  distances_by_region[[region]] <- data.frame(
+    Distance = distances / 1000,  # Convert to km
+    Region = region
+  )
+}
+
+# Combine both regions into one dataframe for plotting
+all_distances <- do.call(rbind, distances_by_region)
+
+# Plot histograms of distances for both regions
+ggplot(all_distances, aes(x = Distance)) +
+  geom_histogram(bins = 50, fill = "steelblue", color = "white") +
+  facet_wrap(~Region, scales = "free_y") +  # Separate plot per region
+  labs(
+    title = "Distance from buildings to nearest Train Station",
+    x = "Distance (km)",
+    y = "Number of Buildings"
+  ) +
+  theme_minimal()
+```
