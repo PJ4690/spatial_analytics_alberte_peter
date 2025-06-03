@@ -8,6 +8,9 @@ This README.md file supplies a brief overview of the contents of this repository
 If you want to test the code from scratch, you should download the full BBR dataset (here: https://ftp.sdfe.dk/main.html?download&weblink=2c950b3aadfeedc3b136df8525234819) and move it into the repository, where it should by default be named DK_INSPIRE_BBR.gpkg. We did not include it in our final repository because the file is massive (4.6 GB). For more information about the dataset, see here: https://dataforsyningen.dk/data/3829. 
 After having downloaded the file, you can run the creating_subsets.Rmd file and create the subsets (which are already included in our final submission). Afterwards you can run the main script, main.Rmd, and create visualizations identical to the ones in our paper. You can also just skip the first part, and only run the main script in order to create the visualizations, as it does not rely on the full dataset but the already existing subsets.
 
+Most of the code runs fairly quick, it is only when looping through each region and getting the station/isochrone and building data that the code takes a long time to process (line.
+
+
 ## Structure
 This section gives an overview of the differnet files in our repository.
 * creating_subsets.Rmd: This file contains code that generates the two subsets from the full BBR dataset (requires that the full dataset is downloaded and in the main folder).
